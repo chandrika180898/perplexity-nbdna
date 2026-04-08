@@ -1,23 +1,21 @@
-# file: low_perplexity_nonB_folder_scan.py
+# file: code.py
 
 import math
 import re
 import csv
-import os
+import streamlit as st
 
 
-def read_sequence(file):
+def read_sequence(uploaded_file):
 
     seq = []
 
-    with open(file) as f:
+    for line in uploaded_file.getvalue().decode("utf-8").splitlines():
 
-        for line in f:
+        if line.startswith(">"):
+            continue
 
-            if line.startswith(">"):
-                continue
-
-            seq.append(line.strip().upper())
+        seq.append(line.strip().upper())
 
     sequence = "".join(seq)
 
@@ -32,18 +30,11 @@ def calculate_perplexity(seq):
 
     total = sum(counts.values())
 
-    probabilities = []
-
-    for c in counts.values():
-
-        if c > 0:
-            probabilities.append(c / total)
+    probabilities = [c/total for c in counts.values() if c > 0]
 
     entropy = -sum(p * math.log2(p) for p in probabilities)
 
-    perplexity = 2 ** entropy
-
-    return perplexity
+    return 2 ** entropy
 
 
 def sliding_windows(seq, window=100):
@@ -53,11 +44,11 @@ def sliding_windows(seq, window=100):
 
     for i in range(len(seq) - window + 1):
 
-        sub = seq[i:i + window]
+        sub = seq[i:i+window]
 
         p = calculate_perplexity(sub)
 
-        windows.append((i, i + window, p))
+        windows.append((i, i+window, p))
         perplexities.append(p)
 
     return windows, perplexities
@@ -100,11 +91,9 @@ def merge_regions(regions):
         last = merged[-1]
 
         if s <= last[1]:
-
             last[1] = max(last[1], e)
 
         else:
-
             merged.append([s, e])
 
     return merged
@@ -125,13 +114,7 @@ def build_nonb_regex():
         r"C{3,}[ACGT]{1,7}C{3,}[ACGT]{1,7}C{3,}[ACGT]{1,7}C{3,}",
 
         "Z_DNA":
-        r"(CG){4,}|(GC){4,}",
-
-        "eGZ":
-        r"(CGG){4,}|(GGC){4,}",
-
-        "Sticky_triplex":
-        r"(GAA){50,}|(TTC){50,}"
+        r"(CG){4,}|(GC){4,}"
     }
 
     return {k: re.compile(v) for k, v in motifs.items()}
@@ -170,66 +153,35 @@ def intersect_motifs_lowP(motifs, regions):
     return results
 
 
-def write_csv(results, output_file):
+st.title("Low Perplexity Non-B DNA Detector")
 
-    with open(output_file, "w", newline="") as f:
+uploaded_file = st.file_uploader(
+    "Upload FASTA or TXT sequence",
+    type=["txt","fa","fasta"]
+)
 
-        writer = csv.writer(f)
+if uploaded_file:
 
-        writer.writerow([
-            "Motif",
-            "Motif_start",
-            "Motif_end",
-            "Motif_sequence",
-            "LowP_start",
-            "LowP_end"
-        ])
-
-        for r in results:
-            writer.writerow(r)
-
-
-def process_file(file_path):
-
-    print("Processing:", file_path)
-
-    seq = read_sequence(file_path)
+    seq = read_sequence(uploaded_file)
 
     windows, perplexities = sliding_windows(seq, 100)
 
     low_regions, threshold = bottom_percentile_windows(
         windows,
         perplexities,
-        percent=5
+        5
     )
 
-    merged_regions = merge_regions(low_regions)
+    merged = merge_regions(low_regions)
 
     regex_dict = build_nonb_regex()
 
     motifs = scan_motifs(seq, regex_dict)
 
-    overlaps = intersect_motifs_lowP(motifs, merged_regions)
+    overlaps = intersect_motifs_lowP(motifs, merged)
 
-    output = os.path.splitext(file_path)[0] + "_results.csv"
+    st.write("Perplexity threshold:", threshold)
 
-    write_csv(overlaps, output)
+    st.write("Results:")
 
-    print("Output:", output)
-    print("Perplexity threshold:", threshold)
-    print()
-
-
-# -------------------------
-# SET YOUR FOLDER PATH HERE
-# -------------------------
-
-folder = r"C:\Users\user\Desktop\OT"
-
-for file in os.listdir(folder):
-
-    if file.endswith((".txt", ".fa", ".fasta")):
-
-        full_path = os.path.join(folder, file)
-
-        process_file(full_path)
+    st.dataframe(overlaps)
