@@ -40,8 +40,8 @@ def calc_perplexity(seq):
     return 2 ** entropy
 
 
-# ---------------- SLIDING WINDOWS ----------------
-def sliding_windows(seq, window=100):
+# ---------------- SLIDING WINDOWS (10 nt) ----------------
+def sliding_windows(seq, window=10):
 
     windows = []
     perplexities = []
@@ -83,6 +83,7 @@ def merge_regions(regions):
     merged = [list(regions[0])]
 
     for s, e in regions[1:]:
+
         last = merged[-1]
 
         if s <= last[1]:
@@ -93,15 +94,67 @@ def merge_regions(regions):
     return merged
 
 
+# ---------------- KADANE LOW PERPLEXITY DETECTION ----------------
+def kadane_low_perplexity(windows, perps, threshold):
+
+    scores = [threshold - p for p in perps]
+
+    regions = []
+    current_sum = 0
+    start = 0
+
+    for i, score in enumerate(scores):
+
+        if current_sum <= 0:
+            start = i
+            current_sum = score
+        else:
+            current_sum += score
+
+        if current_sum > 0:
+
+            w_start = windows[start][0]
+            w_end = windows[i][1]
+
+            regions.append((w_start, w_end))
+
+    return merge_regions(regions)
+
+
+# ---------------- FILTER MINIMUM REGION LENGTH ----------------
+def filter_min_length(regions, min_len=100):
+
+    filtered = []
+
+    for s, e in regions:
+        if (e - s) >= min_len:
+            filtered.append((s, e))
+
+    return filtered
+
+
 # ---------------- MOTIFS ----------------
 def build_regex():
 
     motifs = {
+
         "PolyA/T": r"A{7,}|T{7,}",
-        "STR": r"([ACGT]{1,6})\1{4,}",
+
+        "STR": r"([ACGT]{1,6})\1{3,}",
+
+        "DirectRepeat_DR": r"([ACGT]{4,10})[ACGT]{0,10}\1",
+
+        "InvertedRepeat_IR": r"([ACGT]{4,})[ACGT]{0,10}\1",
+
+        "MirrorRepeat_MR": r"([ACGT]{4,})[ACGT]{0,10}\1",
+
         "G4": r"G{3,}[ACGT]{1,7}G{3,}[ACGT]{1,7}G{3,}[ACGT]{1,7}G{3,}",
+
         "iMotif": r"C{3,}[ACGT]{1,7}C{3,}[ACGT]{1,7}C{3,}[ACGT]{1,7}C{3,}",
-        "ZDNA": r"(CG){4,}|(GC){4,}"
+
+        "ZDNA": r"(CG){4,}|(GC){4,}",
+
+        "Triplex_HDNA": r"[AG]{10,}"
     }
 
     return {k: re.compile(v) for k, v in motifs.items()}
@@ -120,7 +173,7 @@ if uploaded_file:
         st.error("Sequence must be at least 100 bp.")
         st.stop()
 
-    windows, perps = sliding_windows(seq, 100)
+    windows, perps = sliding_windows(seq, 10)
 
     if not perps:
         st.error("Perplexity calculation failed.")
@@ -128,9 +181,11 @@ if uploaded_file:
 
     threshold = percentile(perps, 5)
 
-    low_regions = [(s, e) for s, e, p in windows if p <= threshold]
+    # Kadane algorithm detection
+    regions = kadane_low_perplexity(windows, perps, threshold)
 
-    merged = merge_regions(low_regions)
+    # Keep regions >= 100 nt
+    merged = filter_min_length(regions, 100)
 
     regex_dict = build_regex()
 
@@ -152,7 +207,8 @@ if uploaded_file:
                         "Motif_End": me,
                         "Motif_Sequence": m.group(),
                         "LowP_Start": rs,
-                        "LowP_End": re_
+                        "LowP_End": re_,
+                        "Region_Length": re_ - rs
                     })
 
     if not results:
