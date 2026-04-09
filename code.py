@@ -1,17 +1,19 @@
-# file: code.py
-
-import math
-import re
-import csv
 import streamlit as st
 import pandas as pd
+import math
+import re
 
 
+# ---------------- READ SEQUENCE ----------------
 def read_sequence(uploaded_file):
+
+    text = uploaded_file.getvalue().decode("utf-8")
+
+    lines = text.splitlines()
 
     seq = []
 
-    for line in uploaded_file.getvalue().decode("utf-8").splitlines():
+    for line in lines:
 
         if line.startswith(">"):
             continue
@@ -25,6 +27,7 @@ def read_sequence(uploaded_file):
     return sequence
 
 
+# ---------------- PERPLEXITY ----------------
 def calculate_perplexity(seq):
 
     counts = {n: seq.count(n) for n in "ACGT"}
@@ -34,13 +37,14 @@ def calculate_perplexity(seq):
     if total == 0:
         return 0
 
-    probabilities = [c/total for c in counts.values() if c > 0]
+    probs = [c/total for c in counts.values() if c > 0]
 
-    entropy = -sum(p * math.log2(p) for p in probabilities)
+    entropy = -sum(p * math.log2(p) for p in probs)
 
     return 2 ** entropy
 
 
+# ---------------- SLIDING WINDOW ----------------
 def sliding_windows(seq, window=100):
 
     windows = []
@@ -56,26 +60,28 @@ def sliding_windows(seq, window=100):
         p = calculate_perplexity(sub)
 
         windows.append((i, i+window, p))
+
         perplexities.append(p)
 
     return windows, perplexities
 
 
+# ---------------- PERCENTILE ----------------
 def percentile(values, percent):
 
-    if not values:
+    if len(values) == 0:
         return 0
 
     values = sorted(values)
 
     index = int(len(values) * percent / 100)
 
-    if index >= len(values):
-        index = len(values) - 1
+    index = min(index, len(values)-1)
 
     return values[index]
 
 
+# ---------------- LOW PERPLEXITY ----------------
 def bottom_percentile_windows(windows, perplexities, percent=5):
 
     threshold = percentile(perplexities, percent)
@@ -90,6 +96,7 @@ def bottom_percentile_windows(windows, perplexities, percent=5):
     return regions, threshold
 
 
+# ---------------- MERGE REGIONS ----------------
 def merge_regions(regions):
 
     if not regions:
@@ -104,14 +111,17 @@ def merge_regions(regions):
         last = merged[-1]
 
         if s <= last[1]:
+
             last[1] = max(last[1], e)
 
         else:
+
             merged.append([s, e])
 
     return merged
 
 
+# ---------------- MOTIFS ----------------
 def build_nonb_regex():
 
     motifs = {
@@ -130,9 +140,10 @@ def build_nonb_regex():
         r"(CG){4,}|(GC){4,}"
     }
 
-    return {k: re.compile(v) for k, v in motifs.items()}
+    return {k: re.compile(v) for k,v in motifs.items()}
 
 
+# ---------------- SCAN MOTIFS ----------------
 def scan_motifs(seq, regex_dict):
 
     hits = []
@@ -146,11 +157,13 @@ def scan_motifs(seq, regex_dict):
     return hits
 
 
+# ---------------- OVERLAP ----------------
 def overlap(a_start, a_end, b_start, b_end):
 
     return max(a_start, b_start) < min(a_end, b_end)
 
 
+# ---------------- INTERSECTION ----------------
 def intersect_motifs_lowP(motifs, regions):
 
     results = []
@@ -162,10 +175,11 @@ def intersect_motifs_lowP(motifs, regions):
             if overlap(ms, me, rs, re):
 
                 results.append({
+
                     "Motif": name,
                     "Motif_Start": ms,
                     "Motif_End": me,
-                    "Motif_Sequence": motif_seq,
+                    "Sequence": motif_seq,
                     "LowP_Start": rs,
                     "LowP_End": re
                 })
@@ -173,7 +187,7 @@ def intersect_motifs_lowP(motifs, regions):
     return results
 
 
-# ------------------ STREAMLIT UI ------------------
+# ---------------- STREAMLIT APP ----------------
 
 st.title("Low Perplexity Non-B DNA Detector")
 
@@ -182,17 +196,18 @@ uploaded_file = st.file_uploader(
     type=["txt","fa","fasta"]
 )
 
+
 if uploaded_file:
 
     seq = read_sequence(uploaded_file)
 
     if len(seq) < 100:
 
-        st.error("Sequence length must be at least 100 bp.")
+        st.error("Sequence must be at least 100 bp")
 
     else:
 
-        windows, perplexities = sliding_windows(seq, 100)
+        windows, perplexities = sliding_windows(seq,100)
 
         low_regions, threshold = bottom_percentile_windows(
             windows,
@@ -208,13 +223,12 @@ if uploaded_file:
 
         overlaps = intersect_motifs_lowP(motifs, merged)
 
-        st.write("Perplexity threshold:", threshold)
+        st.write("Perplexity Threshold:", threshold)
 
         if overlaps:
 
             df = pd.DataFrame(overlaps)
 
-            st.write("Results:")
             st.dataframe(df)
 
             csv = df.to_csv(index=False)
@@ -222,7 +236,7 @@ if uploaded_file:
             st.download_button(
                 "Download CSV",
                 csv,
-                "low_perplexity_nonB_results.csv",
+                "results.csv",
                 "text/csv"
             )
 
